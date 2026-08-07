@@ -17,6 +17,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Default PPTX export uses the local patched WASM (single source: `editor/neo-ppt/assets/pptd_wasm_bg-DPPWdROu.wasm`)
 - Local editor hides share / cloud / Google Drive entry points and blocks related cloud/Google API calls
 - Removed the old iframe shell (`app.js` / `styles.css`), deprecated `export_host.html`, and unused browser top-bar export glue
+- **Be sure to upgrade**: this release is fully localized — editing and export now run entirely on the local neo-ppt mirror + patched WASM instead of the official cloud export pipeline, so the "official export requires signature" issue no longer occurs. Run `npx open-kimi-ppt-skill@latest install -y` (or pick a target directory interactively) to reinstall and sync the fully localized resources into your installed directory.
 
 ### Fixed
 

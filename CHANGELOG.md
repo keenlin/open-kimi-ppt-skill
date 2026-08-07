@@ -17,6 +17,7 @@
 - 默认 PPTX 导出统一走本地 patched WASM（单一真源 `editor/neo-ppt/assets/pptd_wasm_bg-DPPWdROu.wasm`）
 - 本地编辑器关闭分享 / 云盘 / Google Drive 入口；拦截相关云端与 Google API 请求
 - 移除旧 iframe 壳（`app.js` / `styles.css`）、废弃的 `export_host.html` 与未接线的浏览器顶栏导出胶水
+- **务必升级**：本版本已彻底本地化，编辑与导出均走本地 neo-ppt 镜像 + patched WASM，不再经过官方云端导出链路，也不会再触发「官方导出需要签名」问题；请运行 `npx open-kimi-ppt-skill@latest install -y`（或交互选择目标目录）重新安装，将完全本地化的资源同步到已安装目录。
 
 ### 修复
 
