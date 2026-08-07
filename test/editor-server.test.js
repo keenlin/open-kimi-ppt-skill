@@ -22,11 +22,16 @@ test("serves the PPTD editor and its JavaScript modules", async () => {
     const index = await fetch(`${url}/`);
     assert.equal(index.status, 200);
     assert.match(index.headers.get("content-type"), /^text\/html/);
-    assert.match(await index.text(), /打开 PPTD 文件夹/);
+    const html = await index.text();
+    assert.match(html, /打开 PPTD 文件夹/);
+    assert.match(html, /local-bridge\.js/);
 
-    const app = await fetch(`${url}/app.js`);
-    assert.equal(app.status, 200);
-    assert.match(app.headers.get("content-type"), /^text\/javascript/);
+    const bridge = await fetch(`${url}/local-bridge.js`);
+    assert.equal(bridge.status, 200);
+    assert.match(bridge.headers.get("content-type"), /^text\/javascript/);
+
+    const wasm = await fetch(`${url}/neo-ppt/assets/pptd_wasm_bg-DPPWdROu.wasm`);
+    assert.equal(wasm.status, 200);
   });
 });
 
@@ -39,7 +44,7 @@ test("returns 404 for files outside the packaged editor", async () => {
 
 test("supports HEAD requests without a response body", async () => {
   await withServer(async (url) => {
-    const response = await fetch(`${url}/styles.css`, { method: "HEAD" });
+    const response = await fetch(`${url}/local-shell.css`, { method: "HEAD" });
     assert.equal(response.status, 200);
     assert.equal(await response.text(), "");
   });

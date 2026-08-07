@@ -135,7 +135,9 @@ npx open-kimi-ppt-skill serve --port 56000
 
 ### Windows：常驻调试浏览器说明
 
-在 Windows 上导出 PPTX 时，脚本会自动启动一个**常驻的调试浏览器**。这是有意设计，不是异常进程：
+仅在使用 **视觉质检**（`export_images.py`）或 **`--browser` PPTX**（本地编辑器 UI）时需要。默认 Node WASM 导出不启动浏览器。
+
+在 Windows 上走浏览器路径时，脚本会自动启动一个**常驻的调试浏览器**。这是有意设计，不是异常进程：
 
 - **为什么需要**：agent-browser 在 Windows 下无法自行启动 Chrome（Chrome 启动器把进程交接给子进程后立即退出，被误判为崩溃），导出只能改为驱动一个外部启动的浏览器。
 - **它是什么**：优先使用本机 Chrome，未安装时回退到 Edge；以 `--remote-debugging-port`（默认 `9337`）和独立配置目录 `%TEMP%\okp-cdp-profile` 启动，窗口定位在屏幕外，不影响日常使用。
@@ -233,12 +235,9 @@ deck/
 - CLI 只在 `127.0.0.1` 启动静态文件服务，不会监听局域网地址。
 - 浏览器只在用户主动授权后读取完整 PPTD 项目目录。
 - 保存回调只允许修改 `.pptd` 和 `.page` 文件，并拒绝绝对路径与 `..` 路径越界。
-- PPTD 内容由本地宿主交给公开的 Kimi 网页编辑器处理；远程图片、字体和编辑器资源仍可能从对应服务器加载。
+- 默认编辑与 PPTX / 图片导出使用本地 neo-ppt 镜像 + patched WASM，**不依赖** `www.kimi.com`；远程图片、字体若被文稿引用仍可能从对应服务器加载。
+- 视觉质检（`export_images.py`）与 `--browser` 路径驱动的是同一套本地编辑器（需本机 Chromium），不再访问公开 Kimi 站。
 - 本项目不会提供或注入 Kimi 登录令牌，也不会访问用户的 Kimi 私有文稿。
-
-## 兼容性说明
-
-这是针对当前公开实现的兼容宿主，不是稳定的官方 SDK。Kimi 更新前端资源哈希、PPTD 格式或 iframe/RPC 协议后，本项目可能需要同步升级。成功生成 PPTX 也不代表 PowerPoint、WPS 和 Keynote 对所有动画效果都能完全一致地播放。
 
 ## 本地开发
 

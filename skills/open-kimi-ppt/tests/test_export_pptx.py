@@ -202,9 +202,9 @@ class ExportPptxTests(unittest.TestCase):
             Path("/tmp/downloads"),
         )
         with patch.object(session, "run") as run:
-            session.open("http://127.0.0.1:9/export_host.html")
+            session.open("http://127.0.0.1:9/?ndExport=1")
         run.assert_called_once_with(
-            ["open", "http://127.0.0.1:9/export_host.html"],
+            ["open", "http://127.0.0.1:9/?ndExport=1"],
             timeout=90,
         )
 

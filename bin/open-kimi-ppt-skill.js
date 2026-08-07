@@ -190,22 +190,28 @@ async function promptInstallTargets() {
   const choices = knownTargetDirectories();
   const selected = new Set([0]);
   let cursor = 0;
-  const lines = choices.length + 3;
+  // title + help + one line per choice (must match what render() writes)
+  const lines = choices.length + 2;
+
+  const writeLine = (text) => {
+    output.write(`\u001b[2K${text}\n`);
+  };
 
   const render = (initial = false) => {
     if (!initial) {
       output.write(`\u001b[${lines}A`);
     }
-    output.write("Install open-kimi-ppt to which skills directories?\n");
-    output.write("↑/↓ move · space select · a all · enter confirm · ctrl+c cancel\n");
+    writeLine("Install open-kimi-ppt to which skills directories?");
+    writeLine("↑/↓ move · space select · a all · enter confirm · ctrl+c cancel");
     for (const [index, choice] of choices.entries()) {
       const pointer = index === cursor ? "❯" : " ";
       const mark = selected.has(index) ? "◉" : "◯";
       const installed = existsSync(join(choice.directory, SKILL_NAME, "SKILL.md"))
         ? " (installed)"
         : "";
-      const line = `${pointer}${mark} ${displayPath(choice.directory).padEnd(28)} ${choice.label}${installed}`;
-      output.write(`\u001b[2K${line}\n`);
+      writeLine(
+        `${pointer}${mark} ${displayPath(choice.directory).padEnd(28)} ${choice.label}${installed}`,
+      );
     }
   };
 
@@ -311,9 +317,20 @@ async function resolveInstallTargets(options) {
   return promptInstallTargets();
 }
 
+const CANONICAL_WASM = join(
+  packageRoot,
+  "editor",
+  "neo-ppt",
+  "assets",
+  "pptd_wasm_bg-DPPWdROu.wasm",
+);
+
 function installSkillTo(skillsDirectory) {
   if (!existsSync(join(sourceDirectory, "SKILL.md"))) {
     throw new Error(`packaged skill is incomplete: ${sourceDirectory}`);
+  }
+  if (!existsSync(CANONICAL_WASM)) {
+    throw new Error(`packaged patched WASM is missing: ${CANONICAL_WASM}`);
   }
 
   const destination = join(skillsDirectory, SKILL_NAME);
@@ -327,6 +344,19 @@ function installSkillTo(skillsDirectory) {
     cpSync(sourceDirectory, stagedSkill, {
       recursive: true,
       filter: (source) => ![".DS_Store", "_user_meta.json"].includes(basename(source)),
+    });
+    // Single canonical WASM in editor/; copy into skill tree for agent scripts.
+    const stagedWasmDir = join(stagedSkill, "scripts", "local-export");
+    mkdirSync(stagedWasmDir, { recursive: true });
+    cpSync(CANONICAL_WASM, join(stagedWasmDir, "pptd_wasm_bg.wasm"));
+    // Offline image/PPTX browser path needs the local neo-ppt mirror.
+    const packagedEditor = join(packageRoot, "editor");
+    if (!existsSync(join(packagedEditor, "index.html"))) {
+      throw new Error(`packaged editor is missing: ${packagedEditor}`);
+    }
+    cpSync(packagedEditor, join(stagedSkill, "editor"), {
+      recursive: true,
+      filter: (source) => basename(source) !== ".DS_Store",
     });
 
     rmSync(destination, { recursive: true, force: true });

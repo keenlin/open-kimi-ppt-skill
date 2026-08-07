@@ -4,6 +4,26 @@
 
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-08-07
+
+### Added
+
+- Offline neo-ppt editor mirror (`editor/`): no iframe, no `www.kimi.com`; open a PPTD folder and export from the official UI
+- Skill install copies the full `editor/` tree plus patched WASM into installed skill directories
+- Image QA / `--browser` export now drives the local editor (`?ndExport=1` + `payload.json`) instead of kimi.com
+
+### Changed
+
+- Default PPTX export uses the local patched WASM (single source: `editor/neo-ppt/assets/pptd_wasm_bg-DPPWdROu.wasm`)
+- Local editor hides share / cloud / Google Drive entry points and blocks related cloud/Google API calls
+- Removed the old iframe shell (`app.js` / `styles.css`), deprecated `export_host.html`, and unused browser top-bar export glue
+
+### Fixed
+
+- Avoid dark-theme FOUC by forcing light mode
+- Demo / read-only opens can edit, present, and export again (`isCreate: false` + editable config)
+- Browser sessions strip `HTTP(S)_PROXY` so corporate proxies do not 403 localhost
+
 ## [1.2.0] - 2026-08-06
 
 ### Added

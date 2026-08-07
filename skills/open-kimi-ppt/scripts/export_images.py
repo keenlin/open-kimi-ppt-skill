@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Export a PPTD project as page images through Kimi's public editor for visual QA.
+"""Export a PPTD project as page images through the local neo-ppt mirror for visual QA.
 
-Reuses the same localhost SDK host and agent-browser flow as export_pptx.py, but
-chooses 图片 in the export dialog, captures the images ZIP, unzips it, and stitches
-all pages into a single overview image that a multimodal model can review.
+Reuses the localhost local-editor host from export_pptx.py (no www.kimi.com), chooses
+图片 in the export dialog, captures the images ZIP, unzips it, and stitches all pages
+into a single overview image that a multimodal model can review.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from export_pptx import (
-    HOST_TEMPLATE,
     BrowserSession,
     ExportError,
     build_payload,
@@ -34,7 +33,7 @@ from export_pptx import (
     log,
     ref_by_name,
     run_command,
-    serve,
+    serve_local_editor,
     temporary_directory,
     wait_for_export_dialog,
 )
@@ -44,6 +43,32 @@ OVERVIEW_COLUMNS = 3
 OVERVIEW_THUMB_WIDTH = 640
 OVERVIEW_LABEL_HEIGHT = 32
 OVERVIEW_GAP = 12
+PAGE_URL_HINT = "127.0.0.1"
+
+# The export dialog's 图片 format option is a plain <div class="radio-group-item">
+# without an ARIA role, so agent-browser's interactive snapshot never exposes it.
+# Local editor is same-origin (no kimi iframe); CDP Runtime.evaluate on the page works.
+IMAGE_FORMAT_CLICK_JS = """
+(() => {
+  const items = [...document.querySelectorAll('.radio-group-item')];
+  const pool = items.length
+    ? items
+    : [...document.querySelectorAll('div,span,label,button')].filter(
+        (el) => el.children.length === 0
+      );
+  const target = pool.find((el) => el.textContent.trim() === '图片');
+  if (!target) return null;
+  target.click();
+  return 'clicked';
+})()
+""".strip()
+
+ACTIVE_FORMAT_JS = """
+(() => {
+  const active = document.querySelector('.radio-group-item.active');
+  return active ? active.textContent.trim() : null;
+})()
+""".strip()
 
 
 def ensure_pillow() -> Tuple[Any, Any, Any]:
@@ -151,34 +176,6 @@ def stitch_overview(
     return output
 
 
-OOPIF_URL_HINT = "kimi.com/neo-ppt"
-
-# The export dialog's 图片 format option is a plain <div class="radio-group-item">
-# without an ARIA role, so agent-browser's interactive snapshot never exposes it
-# and cross-origin iframe rules block page-level eval. Clicking it requires CDP.
-IMAGE_FORMAT_CLICK_JS = """
-(() => {
-  const items = [...document.querySelectorAll('.radio-group-item')];
-  const pool = items.length
-    ? items
-    : [...document.querySelectorAll('div,span,label,button')].filter(
-        (el) => el.children.length === 0
-      );
-  const target = pool.find((el) => el.textContent.trim() === '图片');
-  if (!target) return null;
-  target.click();
-  return 'clicked';
-})()
-""".strip()
-
-ACTIVE_FORMAT_JS = """
-(() => {
-  const active = document.querySelector('.radio-group-item.active');
-  return active ? active.textContent.trim() : null;
-})()
-""".strip()
-
-
 def ensure_websocket() -> Any:
     try:
         import websocket
@@ -207,7 +204,7 @@ def browser_cdp_url(browser: BrowserSession) -> str:
     return match.group(0)
 
 
-def evaluate_in_iframe(cdp_url: str, url_hint: str, expression: str) -> Any:
+def evaluate_in_page(cdp_url: str, url_hint: str, expression: str) -> Any:
     websocket = ensure_websocket()
 
     def call(socket: Any, request_id: int, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -230,8 +227,14 @@ def evaluate_in_iframe(cdp_url: str, url_hint: str, expression: str) -> Any:
         os.environ.update(saved_proxy)
     try:
         targets = call(socket, 1, "Target.getTargets", {}).get("targetInfos", [])
-        target = next(
-            (item for item in targets if url_hint in str(item.get("url", ""))), None
+        page_targets = [
+            item
+            for item in targets
+            if item.get("type") == "page" and url_hint in str(item.get("url", ""))
+        ]
+        target = page_targets[0] if page_targets else next(
+            (item for item in targets if url_hint in str(item.get("url", ""))),
+            None,
         )
         if target is None:
             visible = ", ".join(
@@ -266,7 +269,7 @@ def evaluate_in_iframe(cdp_url: str, url_hint: str, expression: str) -> Any:
             result = message.get("result", {})
             if result.get("exceptionDetails"):
                 details = result["exceptionDetails"]
-                raise ExportError(f"iframe script failed: {details.get('text')}")
+                raise ExportError(f"page script failed: {details.get('text')}")
             return result.get("result", {}).get("value")
     finally:
         socket.close()
@@ -274,12 +277,13 @@ def evaluate_in_iframe(cdp_url: str, url_hint: str, expression: str) -> Any:
 
 def select_image_format(browser: BrowserSession) -> None:
     cdp_url = browser_cdp_url(browser)
-    value = evaluate_in_iframe(cdp_url, OOPIF_URL_HINT, IMAGE_FORMAT_CLICK_JS)
+    value = evaluate_in_page(cdp_url, PAGE_URL_HINT, IMAGE_FORMAT_CLICK_JS)
     if value != "clicked":
         raise ExportError("could not find the 图片 option in the export dialog")
     deadline = time.monotonic() + 10
+    active = None
     while time.monotonic() < deadline:
-        active = evaluate_in_iframe(cdp_url, OOPIF_URL_HINT, ACTIVE_FORMAT_JS)
+        active = evaluate_in_page(cdp_url, PAGE_URL_HINT, ACTIVE_FORMAT_JS)
         if active == "图片":
             return
         time.sleep(0.3)
@@ -307,16 +311,12 @@ def export_images(
         temp_dir = Path(temp_name)
         download_dir = temp_dir / "downloads"
         download_dir.mkdir()
-        shutil.copy2(HOST_TEMPLATE, temp_dir / HOST_TEMPLATE.name)
-        (temp_dir / "payload.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-        )
-        server, thread, url = serve(temp_dir)
+        server, thread, url = serve_local_editor(payload)
         session = f"open-kimi-ppt-images-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         browser = BrowserSession(agent_browser, session, temp_dir, download_dir)
         downloads = default_downloads_dir()
         try:
-            log("opening the public Kimi slide editor")
+            log("opening the local neo-ppt editor")
             browser.open(url)
             browser.run(
                 [
@@ -337,7 +337,7 @@ def export_images(
 
             started_at = time.time() - 1.0
             download_ref = ref_by_name(dialog, "下载", "button")
-            log("rendering page images in the browser")
+            log("rendering page images in the local editor")
             browser.run(["click", f"@{download_ref}"], timeout=300)
             downloaded = find_download(
                 (downloads, download_dir, temp_dir),
@@ -380,13 +380,14 @@ def export_images(
         "overview": str(overview),
         "output": str(output),
         "images": mapping,
+        "exporter": "browser-local-editor",
     }
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export a PPTD project as page images via Kimi's public editor, unzip "
+            "Export a PPTD project as page images via the local neo-ppt editor, unzip "
             "them, and stitch an overview image for visual QA."
         )
     )

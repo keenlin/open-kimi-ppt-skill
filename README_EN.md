@@ -123,7 +123,9 @@ Writable folder access requires a Chromium-based browser with the File System Ac
 
 ### Windows: a persistent debug browser
 
-On Windows, exporting PPTX automatically starts a **persistent debug browser**. This is by design, not a stray process:
+Only needed for **visual QA** (`export_images.py`) or the **`--browser` PPTX fallback**. Default local WASM export does not start a browser.
+
+On Windows, the browser path automatically starts a **persistent debug browser**. This is by design, not a stray process:
 
 - **Why it's needed**: agent-browser cannot launch Chrome by itself on Windows (the Chrome launcher hands off to a child process and exits immediately, which is misread as a crash), so the export drives an externally started browser instead.
 - **What it is**: your installed Chrome (falling back to Edge), launched with `--remote-debugging-port` (default `9337`) and a dedicated profile at `%TEMP%\okp-cdp-profile`, with the window positioned off-screen so it stays out of the way.
@@ -221,12 +223,9 @@ deck/
 - The CLI serves static files on `127.0.0.1` only and does not listen on LAN interfaces.
 - The browser reads a complete PPTD project directory only after explicit user authorization.
 - Save callbacks may only modify `.pptd` and `.page` files; absolute paths and `..` traversal are rejected.
-- The local host passes PPTD content to the public Kimi web editor. Remote images, fonts, and editor resources may still be fetched from their respective servers.
+- Default editing and PPTX/image export use the local neo-ppt mirror plus patched WASM and do **not** depend on `www.kimi.com`. Remote images or fonts referenced by the deck may still be fetched from their hosts.
+- Visual QA (`export_images.py`) and `--browser` drive that same local editor (Chromium required) and no longer hit the public Kimi site.
 - This project does not provide or inject Kimi login tokens and does not access private Kimi documents.
-
-## Compatibility
-
-This is a compatibility host for the current public implementation, not a stable official SDK. Updates to Kimi frontend asset hashes, the PPTD format, or the iframe/RPC protocol may require a corresponding project update. Successfully generating a PPTX does not guarantee identical animation playback in PowerPoint, WPS, and Keynote.
 
 ## Local development
 

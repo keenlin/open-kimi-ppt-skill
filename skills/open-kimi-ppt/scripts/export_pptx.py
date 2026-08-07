@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Export a PPTD project through Kimi's public browser-side PPTX writer.
+"""Export a PPTD project to PPTX.
 
-The script uses a temporary localhost SDK host and agent-browser. It never uploads
-the PPTD project as a document. Referenced remote resources may still be fetched by
-the official editor. Local image files are exposed to the iframe as data URLs.
+Default path (preferred): local patched official WASM writer
+  scripts/local-export/export-pptd.mjs --no-sign
+  → offline, no cookie, no signature API, no browser UI.
+
+Optional --browser path: local neo-ppt mirror via agent-browser
+  (same UI as `npx open-kimi-ppt-skill serve`, no www.kimi.com).
+
+Image QA (`export_images.py`) uses the same local editor host.
 """
 
 from __future__ import annotations
@@ -28,9 +33,9 @@ import xml.etree.ElementTree as ET
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
-HOST_TEMPLATE = Path(__file__).with_name("export_host.html")
 IMAGE_MIME = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -49,6 +54,11 @@ FADE_TRANSITION_XML = (
 MIN_AGENT_BROWSER_VERSION = (0, 33, 2)
 MIN_NODE_MAJOR = 18
 NODE_INSTALL_HINT = "Install Node.js 18+ from https://nodejs.org, then retry."
+EDITOR_MISSING_HINT = (
+    "local neo-ppt editor not found. Re-run "
+    "`npx open-kimi-ppt-skill install` (copies editor into the skill) "
+    "or set OPEN_KIMI_PPT_EDITOR to the editor directory."
+)
 
 
 class ExportError(RuntimeError):
@@ -452,6 +462,25 @@ class BrowserSession:
         self.env = os.environ.copy()
         self.env.setdefault("AGENT_BROWSER_DEFAULT_TIMEOUT", "60000")
         self.env.setdefault("AGENT_BROWSER_IDLE_TIMEOUT_MS", "180000")
+        # Local editor host is 127.0.0.1; corporate HTTP(S)_PROXY would otherwise
+        # intercept and 403 the offline export page.
+        for key in (
+            "http_proxy",
+            "https_proxy",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "all_proxy",
+            "socks5_proxy",
+            "SOCKS5_PROXY",
+        ):
+            self.env.pop(key, None)
+        no_proxy = self.env.get("NO_PROXY") or self.env.get("no_proxy") or ""
+        parts = {p.strip() for p in no_proxy.split(",") if p.strip()}
+        parts.update({"127.0.0.1", "localhost", "::1"})
+        joined = ",".join(sorted(parts))
+        self.env["NO_PROXY"] = joined
+        self.env["no_proxy"] = joined
         if cdp_port is not None:
             self.env["AGENT_BROWSER_CDP"] = str(cdp_port)
 
@@ -704,7 +733,27 @@ def verify_output(pptx: Path, transition: str, expect_fonts: bool) -> Dict[str, 
         }
 
 
-def serve(directory: Path) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
+def resolve_editor_root() -> Path:
+    """Locate the offline neo-ppt mirror (package editor/ or skill-installed copy)."""
+    env = os.environ.get("OPEN_KIMI_PPT_EDITOR")
+    candidates: List[Path] = []
+    if env:
+        candidates.append(Path(env).expanduser().resolve())
+    candidates.append(SKILL_DIR / "editor")
+    # monorepo / npm package: skills/open-kimi-ppt → package root
+    candidates.append(SKILL_DIR.parent.parent / "editor")
+    for candidate in candidates:
+        if (candidate / "index.html").is_file():
+            return candidate
+    raise ExportError(EDITOR_MISSING_HINT)
+
+
+def serve(
+    directory: Path,
+    *,
+    entry: str = "index.html",
+) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
+    """Legacy static serve (tests / callers). Prefer serve_local_editor for exports."""
     handler = lambda *args, **kwargs: QuietHandler(  # noqa: E731
         *args, directory=str(directory), **kwargs
     )
@@ -712,7 +761,137 @@ def serve(directory: Path) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     host, port = server.server_address
-    return server, thread, f"http://{host}:{port}/export_host.html"
+    return server, thread, f"http://{host}:{port}/{entry.lstrip('/')}"
+
+
+def serve_local_editor(
+    payload: Dict[str, Any],
+) -> Tuple[ThreadingHTTPServer, threading.Thread, str]:
+    """Serve the offline editor and inject payload.json for headless export."""
+    editor_root = resolve_editor_root()
+    payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    class LocalEditorHandler(QuietHandler):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, directory=str(editor_root), **kwargs)
+
+        def _is_payload(self) -> bool:
+            path = urlparse(self.path).path
+            return path in ("/payload.json", "payload.json")
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self._is_payload():
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload_bytes)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(payload_bytes)
+                return
+            return SimpleHTTPRequestHandler.do_GET(self)
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            if self._is_payload():
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload_bytes)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                return
+            return SimpleHTTPRequestHandler.do_HEAD(self)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), LocalEditorHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    url = f"http://{host}:{port}/?ndExport=1"
+    log(f"local editor host: {url} (root={editor_root})")
+    return server, thread, url
+
+
+LOCAL_EXPORT_DIR = Path(__file__).resolve().parent / "local-export"
+LOCAL_EXPORT_MJS = LOCAL_EXPORT_DIR / "export-pptd.mjs"
+# Canonical patched WASM: editor/neo-ppt/assets/ (repo/npm). Skill install copies it
+# into local-export/pptd_wasm_bg.wasm for ~/.agents|~/.claude skills trees.
+CANONICAL_WASM_NAME = "pptd_wasm_bg-DPPWdROu.wasm"
+
+
+def resolve_local_wasm() -> Path:
+    package_root = Path(__file__).resolve().parents[3]
+    candidates = [
+        LOCAL_EXPORT_DIR / "pptd_wasm_bg.wasm",
+        LOCAL_EXPORT_DIR / CANONICAL_WASM_NAME,
+        SKILL_DIR / "editor" / "neo-ppt" / "assets" / CANONICAL_WASM_NAME,
+        package_root / "editor" / "neo-ppt" / "assets" / CANONICAL_WASM_NAME,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise ExportError(
+        "patched WASM not found. Expected "
+        f"editor/neo-ppt/assets/{CANONICAL_WASM_NAME} (repo/npm package) or "
+        f"{LOCAL_EXPORT_DIR / 'pptd_wasm_bg.wasm'} (after skill install)."
+    )
+
+
+def export_pptx_local(
+    source: Path,
+    output: Path,
+    transition: str,
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Export via local patched official WASM (no cookie / no browser UI)."""
+    if not LOCAL_EXPORT_MJS.is_file():
+        raise ExportError(f"local exporter missing: {LOCAL_EXPORT_MJS}")
+    wasm_path = resolve_local_wasm()
+    node = shutil.which("node")
+    if not node:
+        raise ExportError("node is required for local WASM export")
+
+    manifest = find_manifest(source)
+    output = output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if output.exists() and not force:
+        raise ExportError(f"output already exists (pass --force to replace it): {output}")
+
+    log(f"local WASM export: {manifest} → {output}")
+    log(f"defaults: transition={transition} (no-sign / signature bypassed)")
+
+    # Pass project directory so media paths resolve relative to the deck root.
+    project_dir = manifest.parent if manifest.is_file() else source
+    cmd = [
+        node,
+        str(LOCAL_EXPORT_MJS),
+        str(project_dir),
+        "-o",
+        str(output),
+        "--no-sign",
+        "--transition",
+        transition if transition in ("fade", "none") else "fade",
+        "--wasm",
+        str(wasm_path),
+    ]
+
+    process = subprocess.run(
+        cmd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        timeout=300,
+    )
+    if process.returncode != 0:
+        raise ExportError(
+            f"local WASM export failed ({process.returncode}):\n{process.stdout[-4000:]}"
+        )
+
+    slide_count = patch_transitions(output, transition)
+    summary = verify_output(output, transition, expect_fonts=False)
+    summary["transitionPatchedSlides"] = slide_count
+    summary["output"] = str(output)
+    summary["exporter"] = "local-wasm-patched"
+    log(f"local export ok: {output} ({output.stat().st_size} bytes)")
+    return summary
 
 
 def export_pptx(
@@ -722,7 +901,15 @@ def export_pptx(
     embed_fonts: bool,
     keep_download: bool = False,
     force: bool = False,
+    prefer_local: bool = True,
 ) -> Dict[str, Any]:
+    """Prefer local patched WASM; fall back to local neo-ppt browser UI."""
+    if prefer_local:
+        try:
+            return export_pptx_local(source, output, transition, force=force)
+        except ExportError as exc:
+            log(f"local WASM export unavailable ({exc}); falling back to local browser editor")
+
     manifest = find_manifest(source)
     payload = build_payload(manifest)
     output = output.expanduser().resolve()
@@ -741,16 +928,12 @@ def export_pptx(
         temp_dir = Path(temp_name)
         download_dir = temp_dir / "downloads"
         download_dir.mkdir()
-        shutil.copy2(HOST_TEMPLATE, temp_dir / HOST_TEMPLATE.name)
-        (temp_dir / "payload.json").write_text(
-            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-        )
-        server, thread, url = serve(temp_dir)
+        server, thread, url = serve_local_editor(payload)
         session = f"open-kimi-ppt-export-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         browser = BrowserSession(agent_browser, session, temp_dir, download_dir, cdp_port)
         downloads = default_downloads_dir()
         try:
-            log("opening the public Kimi slide editor")
+            log("opening the local neo-ppt editor")
             browser.open(url)
             browser.run(
                 [
@@ -770,18 +953,18 @@ def export_pptx(
             if state is not None:
                 switch_ref, checked, disabled = state
                 if disabled and checked != embed_fonts:
-                    log("warning: the official font switch is disabled for this deck")
+                    log("warning: the font switch is disabled for this deck")
                 elif checked != embed_fonts:
                     browser.run(["click", f"@{switch_ref}"])
                     dialog = wait_for_export_dialog(browser)
             elif embed_fonts:
-                log("warning: the official export dialog exposed no font switch")
+                log("warning: the export dialog exposed no font switch")
 
             # Plain click (not agent-browser `download`) so Chrome saves to the
             # default Downloads folder; --download-path is broken on some Windows setups.
             started_at = time.time() - 1.0
             download_ref = ref_by_name(dialog, "下载", "button")
-            log("generating PPTX in the browser")
+            log("generating PPTX in the local editor")
             browser.run(["click", f"@{download_ref}"], timeout=180)
             downloaded = find_download(
                 (downloads, download_dir, temp_dir),
@@ -811,14 +994,16 @@ def export_pptx(
     summary = verify_output(output, transition, embed_fonts)
     summary["transitionPatchedSlides"] = slide_count
     summary["output"] = str(output)
+    summary["exporter"] = "browser-local-editor"
     return summary
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Export a PPTD project to PPTX using Kimi's public browser-side writer. "
-            "Defaults: fade transition and embedded fonts."
+            "Export a PPTD project to PPTX. "
+            "Default: local patched official WASM (offline). "
+            "Optional --browser uses the local neo-ppt mirror (also offline)."
         )
     )
     parser.add_argument("input", type=Path, help=".pptd manifest or project directory")
@@ -835,13 +1020,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         dest="embed_fonts",
         action="store_true",
         default=True,
-        help="embed fonts when available (default)",
+        help="embed fonts when available (browser path; default)",
     )
     font_group.add_argument(
         "--no-embed-fonts",
         dest="embed_fonts",
         action="store_false",
-        help="disable font embedding",
+        help="disable font embedding (browser path)",
+    )
+    parser.add_argument(
+        "--browser",
+        action="store_true",
+        help="force local neo-ppt browser UI path instead of Node WASM",
     )
     parser.add_argument(
         "--keep-browser-raw",
@@ -868,6 +1058,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             args.embed_fonts,
             args.keep_browser_raw,
             args.force,
+            prefer_local=not args.browser,
         )
     except (ExportError, OSError, subprocess.SubprocessError) as exc:
         print(f"open-kimi-ppt export failed: {exc}", file=sys.stderr)

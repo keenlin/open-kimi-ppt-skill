@@ -4,6 +4,26 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-08-07
+
+### 新增
+
+- 本地离线 neo-ppt 编辑器镜像（`editor/`）：无 iframe、无 `www.kimi.com`，支持打开 PPTD 文件夹编辑与官方 UI 内导出
+- Skill install 同步拷贝完整 `editor/` 与 patched WASM，供已安装的 skill 树离线使用
+- 图片 QA / `--browser` 导出改为打本地编辑器（`?ndExport=1` + `payload.json`），不再依赖 kimi.com
+
+### 变更
+
+- 默认 PPTX 导出统一走本地 patched WASM（单一真源 `editor/neo-ppt/assets/pptd_wasm_bg-DPPWdROu.wasm`）
+- 本地编辑器关闭分享 / 云盘 / Google Drive 入口；拦截相关云端与 Google API 请求
+- 移除旧 iframe 壳（`app.js` / `styles.css`）、废弃的 `export_host.html` 与未接线的浏览器顶栏导出胶水
+
+### 修复
+
+- 修复系统深色主题导致的白屏闪烁（强制 light）
+- 修复 demo / 只读打开后无法编辑、演示、导出（`isCreate: false` + 可编辑配置）
+- 浏览器会话剥离 `HTTP(S)_PROXY`，避免公司代理 403 本地回环地址
+
 ## [1.2.0] - 2026-08-06
 
 ### 新增

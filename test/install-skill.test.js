@@ -25,6 +25,14 @@ test("installs the packaged skill into a custom skills directory", () => {
     assert.equal(result.status, 0, result.stderr);
     assert.equal(existsSync(join(target, "open-kimi-ppt", "SKILL.md")), true);
     assert.equal(existsSync(join(target, "open-kimi-ppt", "scripts", "export_pptx.py")), true);
+    assert.equal(
+      existsSync(join(target, "open-kimi-ppt", "scripts", "local-export", "pptd_wasm_bg.wasm")),
+      true,
+    );
+    assert.equal(
+      existsSync(join(target, "open-kimi-ppt", "editor", "index.html")),
+      true,
+    );
     assert.equal(existsSync(join(target, "open-kimi-ppt", "_user_meta.json")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
