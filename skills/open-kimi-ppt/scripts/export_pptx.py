@@ -6,7 +6,7 @@ Default path (preferred): local patched official WASM writer
   → offline, no cookie, no signature API, no browser UI.
 
 Optional --browser path: local neo-ppt mirror via agent-browser
-  (same UI as `npx -p github.com:vvtommy/open-kimi-ppt-skill open-kimi-ppt-skill serve`, no www.kimi.com).
+  (same UI as `npx -p github:vvtommy/open-kimi-ppt-skill open-kimi-ppt-skill serve`, no www.kimi.com).
 
 Image QA (`export_images.py`) uses the same local editor host.
 """
@@ -56,7 +56,7 @@ MIN_NODE_MAJOR = 18
 NODE_INSTALL_HINT = "Install Node.js 18+ from https://nodejs.org, then retry."
 EDITOR_MISSING_HINT = (
     "local neo-ppt editor not found. Re-run "
-    "`npx -p github.com:vvtommy/open-kimi-ppt-skill open-kimi-ppt-skill install` (copies editor into the skill) "
+    "`npx -p github:vvtommy/open-kimi-ppt-skill open-kimi-ppt-skill install` (copies editor into the skill) "
     "or set OPEN_KIMI_PPT_EDITOR to the editor directory."
 )
 
